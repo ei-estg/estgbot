@@ -13,7 +13,7 @@ export const ribasReact = (message: Message) => {
   const content = message.content.replace('<:ribeiro3:855147982110457877>', '') // remove emoji from content
   if (
     keywords.some((word) => content.toLowerCase().includes(word)) &&
-    Math.random() <= 0.226 // 22.6% chance to react
+    Math.random() <= 0.113 // 11.3% chance to react
   ) {
     message.react('🇷')
     message.react('🇮')
