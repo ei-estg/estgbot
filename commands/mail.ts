@@ -54,16 +54,63 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName('mail')
     .setDescription(
-      'Encontra o email de um docente da ESTG através do seu nome',
+      'Encontra o email de um docente da ESTG através da sua disciplina ou nome',
     )
-    .addStringOption((option) =>
-      option
+    .addSubcommand((sub) =>
+      sub
+        .setName('disciplina')
+        .setDescription('Procurar pela disciplina do docente')
+        .addStringOption((option) =>
+          option
+            .setName('disciplina')
+            .setDescription('Disciplina')
+            .setAutocomplete(true)
+            .setRequired(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
         .setName('nome')
-        .setDescription('Nome do docente')
-        .setRequired(true),
+        .setDescription('Procurar pelo nome do docente')
+        .addStringOption((option) =>
+          option
+            .setName('nome')
+            .setDescription('Nome do docente')
+            .setRequired(true),
+        ),
     ),
+  autocomplete: async (interaction: any) => {
+    const subcommand = interaction.options.getSubcommand()
+    if (subcommand === 'disciplina') {
+      const focusedOption = interaction.options.getFocused(true)
+      if (focusedOption.name === 'disciplina') {
+        const input = focusedOption.value as string
+        const units = db
+          .prepare(
+            'SELECT curricularUnit FROM mails WHERE curricularUnit IS NOT NULL',
+          )
+          .all() as { curricularUnit: string }[]
+        const allUnits = units.flatMap((u) =>
+          u.curricularUnit.split('\r\n').map((s) => s.trim()),
+        )
+        const distinctUnits = [...new Set(allUnits)].sort((a, b) =>
+          a.toLowerCase().localeCompare(b.toLowerCase()),
+        )
+        const choices = distinctUnits
+          .map((u) => ({ name: u, value: u }))
+          .filter((choice) =>
+            choice.name.toLowerCase().includes(input.toLowerCase()),
+          )
+          .slice(0, 25)
+        await interaction.respond(choices)
+      }
+    }
+  },
   async execute(interaction: {
-    options: { get: (arg0: string) => { value: any } }
+    options: {
+      get: (arg0: string) => { value: any }
+      getSubcommand: () => string
+    }
 
     deferReply: () => any
     editReply: (arg0: { content: string; embeds: EmbedBuilder[] }) => any
@@ -71,54 +118,63 @@ module.exports = {
   }) {
     const embed = new EmbedBuilder().setColor(defaultColor).setTitle('Emails')
 
-    const searchName = interaction.options.get('nome').value
+    const subcommand = interaction.options.getSubcommand()
     await interaction.deferReply()
 
-    const words = searchName.split(' ')
-
-    let query = 'SELECT * FROM mails WHERE 1=1'
+    let query = 'SELECT * FROM mails WHERE '
     const params: string[] = []
+    let conditions: string[] = []
+    let searchName: string | undefined
 
-    words.forEach((word: string) => {
-      query += ' AND fullName LIKE ? COLLATE NOCASE'
-      params.push(`%${word}%`)
-    })
+    if (subcommand === 'nome') {
+      searchName = interaction.options.get('nome').value as string
+      const words = searchName.split(' ')
 
-    query += ' ORDER BY fullName ASC LIMIT 10'
+      conditions = words.map(() => 'fullName LIKE ? COLLATE NOCASE')
+      params.push(...words.map((word) => `%${word}%`))
+    } else if (subcommand === 'disciplina') {
+      const disciplina = interaction.options.get('disciplina').value
+
+      conditions = ['curricularUnit LIKE ? COLLATE NOCASE']
+      params.push(`%${disciplina}%`)
+    }
+    query += conditions.join(' AND ') + ' ORDER BY fullName ASC LIMIT 7'
 
     const emails = db.prepare(query).all(params) as {
       fullName: string
       email: string
+      curricularUnit?: string
     }[]
 
-    if (emails.length) {
-      emails.forEach(({ fullName, email }) => {
-        embed.addFields({
-          name: fullName,
-          value: email,
+    let teachersToShow: { fullName: string; email?: string }[] = []
+
+    if (emails.length) teachersToShow = emails
+    else if (subcommand === 'nome' && searchName) {
+      const teachers = await getMailByTeacherName(searchName)
+      if (teachers.length) {
+        teachersToShow = teachers
+        teachers.forEach(({ fullName, email }) => {
+          db.prepare(
+            'INSERT OR IGNORE INTO mails (fullName, email, curricularUnit) VALUES (?, ?, NULL)',
+          ).run(fullName, email)
         })
-      })
-      await interaction.editReply({ content: '', embeds: [embed] })
+      }
     }
 
-    // cross-check emails with the website
-    const teachers = await getMailByTeacherName(searchName)
-    if (teachers.length) {
-      embed.data.fields = []
-
-      teachers.map(({ fullName, email }) => {
-        db.prepare(
-          'INSERT OR IGNORE INTO mails (fullName, email) VALUES (?, ?)',
-        ).run(fullName, email)
-
+    if (teachersToShow.length) {
+      teachersToShow.forEach(({ fullName, email }) => {
         embed.addFields({
           name: fullName,
           value: email || 'Email não encontrado',
         })
       })
-    }
-
-    if (!emails.length && !teachers.length)
+      if (subcommand === 'disciplina')
+        embed.addFields({
+          name: '_ _',
+          value:
+            '⚠️ **Esta lista estará sempre sujeita a alterações**!\n-# Se encontrares algum erro, avisa a <@&766292682283810826>',
+        })
+    } else
       embed.setDescription(
         'Não foi possível encontrar o docente que procuras <:sadge:1232239200615665726>',
       )

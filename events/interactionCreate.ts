@@ -23,8 +23,15 @@ module.exports = {
     deferReply: (arg0: { ephemeral: boolean }) => any
     followUp: (arg0: { content: string; ephemeral: boolean }) => any
     isChatInputCommand: () => any
+    isAutocomplete: () => any
     reply: (arg0: { content: string; ephemeral: boolean }) => any
   }) {
+    if (interaction.isAutocomplete()) {
+      const cmd = interaction.client.cmds.get(interaction.commandName)
+      if (cmd && cmd.autocomplete) await cmd.autocomplete(interaction)
+      return
+    }
+
     if (!interaction.isChatInputCommand()) return
 
     const cmd = interaction.client.cmds.get(interaction.commandName)
